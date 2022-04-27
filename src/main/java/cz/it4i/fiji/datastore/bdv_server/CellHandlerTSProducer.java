@@ -35,11 +35,13 @@ class CellHandlerTSProducer {
 
 		try {
 			return new CellHandlerTS(configuration.getDatasetHandler(uuid), dataset,
-				baseURL, version, uuid + "_version-" + version, "/tmp/datastore");
+				baseURL, version, uuid + "_version-" + version, GetThumbnailsDirectoryTS
+					.$());
 		}
 		catch (SpimDataException | IOException exc) {
 			throw new RuntimeException(exc);
 		}
 	}
+
 
 }
