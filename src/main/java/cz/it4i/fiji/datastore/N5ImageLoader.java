@@ -94,20 +94,17 @@ import bdv.img.cache.SimpleCacheArrayLoader;
 import bdv.img.cache.VolatileGlobalCellCache;
 import bdv.util.ConstantRandomAccessible;
 import bdv.util.MipmapTransforms;
-import mpicbg.spim.data.generic.sequence.AbstractSequenceDescription;
 import mpicbg.spim.data.generic.sequence.BasicViewSetup;
 import mpicbg.spim.data.generic.sequence.ImgLoaderHint;
 import mpicbg.spim.data.sequence.MultiResolutionImgLoader;
 import mpicbg.spim.data.sequence.MultiResolutionSetupImgLoader;
 import mpicbg.spim.data.sequence.VoxelDimensions;
 
-class N5ImageLoader implements ViewerImgLoader, MultiResolutionImgLoader
+public class N5ImageLoader implements ViewerImgLoader,
+	MultiResolutionImgLoader
 {
 
 
-	// TODO: it would be good if this would not be needed
-	// find available setups from the n5
-	private final AbstractSequenceDescription<?, ?, ?> seq;
 
 	/**
 	 * Maps setup id to {@link SetupImgLoader}.
@@ -121,11 +118,13 @@ class N5ImageLoader implements ViewerImgLoader, MultiResolutionImgLoader
 	private VolatileGlobalCellCache cache;
 	private N5Reader n5;
 
+	private List<? extends BasicViewSetup> setups;
+
 	public N5ImageLoader(final Supplier<N5Reader> n5Supplier,
-		final AbstractSequenceDescription<?, ?, ?> sequenceDescription)
+		final List<? extends BasicViewSetup> setups)
 	{
 		this.n5Supplier = n5Supplier;
-		this.seq = sequenceDescription;
+		this.setups = setups;
 	}
 
 	/**
@@ -165,8 +164,6 @@ class N5ImageLoader implements ViewerImgLoader, MultiResolutionImgLoader
 	
 					this.n5 = n5Supplier.get();
 					int maxNumLevels = 0;
-					final List<? extends BasicViewSetup> setups = seq
-						.getViewSetupsOrdered();
 					for (final BasicViewSetup setup : setups) {
 						final int setupId = setup.getId();
 						final SetupImgLoader setupImgLoader = createSetupImgLoader(setupId);
@@ -309,9 +306,9 @@ class N5ImageLoader implements ViewerImgLoader, MultiResolutionImgLoader
 		/**
 		 * Create a {@link CellImg} backed by the cache.
 		 */
-		private <T extends NativeType<T>> RandomAccessibleInterval<T>
+		private <T2 extends NativeType<T2>> RandomAccessibleInterval<T2>
 			prepareCachedImage(final int timepointId, final int level,
-				final LoadingStrategy loadingStrategy, final T type)
+				final LoadingStrategy loadingStrategy, final T2 aType)
 		{
 			try {
 				final String pathName = getPathName(setupId, timepointId, level);
@@ -327,13 +324,13 @@ class N5ImageLoader implements ViewerImgLoader, MultiResolutionImgLoader
 				final SimpleCacheArrayLoader<?> loader = createCacheArrayLoader(n5,
 					pathName);
 				return cache.createImg(grid, timepointId, setupId, level, cacheHints,
-					loader, type);
+					loader, aType);
 			}
 			catch (IOException e) {
 				System.err.println(String.format(
 					"image data for timepoint %d setup %d level %d could not be found.",
 					timepointId, setupId, level));
-				return Views.interval(new ConstantRandomAccessible<>(type
+				return Views.interval(new ConstantRandomAccessible<>(aType
 					.createVariable(), 3), new FinalInterval(1, 1, 1));
 			}
 		}
@@ -346,11 +343,11 @@ class N5ImageLoader implements ViewerImgLoader, MultiResolutionImgLoader
 		private final N5Reader n5;
 		private final String pathName;
 		private final DatasetAttributes attributes;
-		private final Function<DataBlock<?>, A> createArray;
+		private final Function<Object, A> createArray;
 
 		N5CacheArrayLoader(final N5Reader n5, final String pathName,
 			final DatasetAttributes attributes,
-			final Function<DataBlock<?>, A> createArray)
+			final Function<Object, A> createArray)
 		{
 			this.n5 = n5;
 			this.pathName = pathName;
@@ -360,8 +357,12 @@ class N5ImageLoader implements ViewerImgLoader, MultiResolutionImgLoader
 
 		@Override
 		public A loadArray(final long[] gridPosition) throws IOException {
-			return createArray.apply(n5.readBlock(pathName, attributes,
-				gridPosition));
+			DataBlock<?> block = n5.readBlock(pathName, attributes, gridPosition);
+			if (block == null) {
+				block = attributes.getDataType().createDataBlock(attributes
+					.getBlockSize(), gridPosition);
+			}
+			return createArray.apply(block != null ? block.getData() : null);
 		}
 	}
 
@@ -373,31 +374,25 @@ class N5ImageLoader implements ViewerImgLoader, MultiResolutionImgLoader
 			case UINT8:
 			case INT8:
 				return new N5CacheArrayLoader<>(n5, pathName, attributes,
-					dataBlock -> new VolatileByteArray(Cast.unchecked(dataBlock
-						.getData()), true));
+					data -> new VolatileByteArray(Cast.unchecked(data), data != null));
 			case UINT16:
 			case INT16:
 				return new N5CacheArrayLoader<>(n5, pathName, attributes,
-					dataBlock -> new VolatileShortArray(Cast.unchecked(dataBlock
-						.getData()), true));
+					data -> new VolatileShortArray(Cast.unchecked(data), data != null));
 			case UINT32:
 			case INT32:
 				return new N5CacheArrayLoader<>(n5, pathName, attributes,
-					dataBlock -> new VolatileIntArray(Cast.unchecked(dataBlock.getData()),
-						true));
+					data -> new VolatileIntArray(Cast.unchecked(data), data != null));
 			case UINT64:
 			case INT64:
 				return new N5CacheArrayLoader<>(n5, pathName, attributes,
-					dataBlock -> new VolatileLongArray(Cast.unchecked(dataBlock
-						.getData()), true));
+					data -> new VolatileLongArray(Cast.unchecked(data), data != null));
 			case FLOAT32:
 				return new N5CacheArrayLoader<>(n5, pathName, attributes,
-					dataBlock -> new VolatileFloatArray(Cast.unchecked(dataBlock
-						.getData()), true));
+					data -> new VolatileFloatArray(Cast.unchecked(data), data != null));
 			case FLOAT64:
 				return new N5CacheArrayLoader<>(n5, pathName, attributes,
-					dataBlock -> new VolatileDoubleArray(Cast.unchecked(dataBlock
-						.getData()), true));
+					data -> new VolatileDoubleArray(Cast.unchecked(data), data != null));
 			default:
 				throw new IllegalArgumentException();
 		}
